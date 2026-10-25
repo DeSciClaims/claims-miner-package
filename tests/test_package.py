@@ -1,7 +1,11 @@
 import json
 import os
+import subprocess
+import sys
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
@@ -89,6 +93,65 @@ def fake_urlopen(request, timeout):
 
 
 class PackageTests(unittest.TestCase):
+    def test_cli_extracts_pdf_through_openai_compatible_http_endpoint(self):
+        observed = []
+
+        class Gateway(BaseHTTPRequestHandler):
+            def do_POST(self):
+                observed.append({
+                    "path": self.path,
+                    "authorization": self.headers.get("Authorization"),
+                    "body": json.loads(self.rfile.read(int(self.headers["Content-Length"]))),
+                })
+                payload = json.dumps(valid_artifact())
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                for piece in (payload[:50], payload[50:]):
+                    event = {"choices": [{"delta": {"content": piece}}]}
+                    self.wfile.write(("data: " + json.dumps(event) + "\n\n").encode())
+                self.wfile.write(b"data: [DONE]\n\n")
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Gateway)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                write_pdf(root / "paper.pdf")
+                (root / "request.json").write_text(json.dumps({
+                    "schema_version": "claims_competition_request_v1",
+                    "paper": {"paper_id": "example-001", "title": "Example paper"},
+                    "pdf_path": "paper.pdf",
+                    "inference": {"model": "example/allowed-model", "stream": True},
+                }))
+                env = {
+                    **os.environ,
+                    "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+                    "CLAIMS_INFERENCE_BASE_URL": f"http://127.0.0.1:{server.server_port}/v1",
+                    "CLAIMS_INFERENCE_TOKEN": "paper-scoped-test-token",
+                }
+                result = subprocess.run(
+                    [sys.executable, "-m", "claims_sample_miner.cli",
+                     "--request", str(root / "request.json"),
+                     "--output", str(root / "output.json")],
+                    env=env, capture_output=True, text=True, timeout=15,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads((root / "output.json").read_text())["logic"]["claims"][0]["claim_id"], "C01")
+            self.assertEqual(len(observed), 1)
+            self.assertEqual(observed[0]["path"], "/v1/chat/completions")
+            self.assertEqual(observed[0]["authorization"], "Bearer paper-scoped-test-token")
+            self.assertEqual(observed[0]["body"]["model"], "example/allowed-model")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
     def test_real_pdf_extraction_and_gateway_stream(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
