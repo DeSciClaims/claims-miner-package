@@ -110,6 +110,11 @@ class PackageTests(unittest.TestCase):
             artifact = json.loads(output.read_text())
             self.assertEqual(artifact["logic"]["claims"][0]["statement"], PAPER_TEXT)
             self.assertEqual(artifact["logic"]["claims"][0]["proof"], ["E01"])
+            source = ingest_pdf(root / "paper.pdf", {"paper_id": "example-001", "title": "Example paper"})
+            self.assertEqual(source["source_metadata"], {"pdf_reader": "pypdf"})
+            self.assertEqual(source["paper"]["authors"], [])
+            self.assertEqual(source["spans"][0]["metadata"]["reader_span_id"], "example-001-p001-001")
+            self.assertIsNone(source["spans"][0]["char_start"])
 
     def test_repair_invalid_grounding(self):
         with tempfile.TemporaryDirectory() as directory:

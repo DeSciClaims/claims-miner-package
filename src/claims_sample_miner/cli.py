@@ -15,7 +15,7 @@ from urllib.request import Request, urlopen
 
 from pypdf import PdfReader
 
-from .artifact_models import Artifact
+from .artifact_models import Artifact, Paper
 from .artifact_validator import validate_agent_artifact
 
 REQUEST_SCHEMA = "claims_competition_request_v1"
@@ -27,22 +27,24 @@ def ingest_pdf(pdf_path: Path, paper: dict[str, Any]) -> dict[str, Any]:
     if pdf_path.suffix.lower() != ".pdf" or not pdf_path.is_file():
         raise ValueError("request.pdf_path must name a readable PDF")
     paper_id = str(paper["paper_id"])
+    paper = Paper.model_validate(paper).model_dump(mode="json")
     spans: list[dict[str, Any]] = []
     for page_number, page in enumerate(PdfReader(str(pdf_path)).pages, start=1):
         page_text = (page.extract_text() or "").strip()
-        for paragraph_number, block in enumerate(re.split(r"\n\s*\n", page_text), start=1):
-            paragraph = block.strip()
-            if paragraph:
-                spans.append({
-                    "span_id": f"{paper_id}-span-{len(spans) + 1:04d}",
-                    "paper_id": paper_id,
-                    "section_name": f"Page {page_number}",
-                    "section_type": "PAGE",
-                    "page": page_number,
-                    "text": paragraph,
-                    "span_type": "text",
-                    "metadata": {"reader_span_id": f"{paper_id}-p{page_number:03d}-{paragraph_number:03d}", "pdf_reader": "pypdf"},
-                })
+        paragraphs = [block.strip() for block in re.split(r"\n\s*\n", page_text) if block.strip()]
+        for paragraph_number, paragraph in enumerate(paragraphs, start=1):
+            spans.append({
+                "span_id": f"{paper_id}-span-{len(spans) + 1:04d}",
+                "paper_id": paper_id,
+                "section_name": f"Page {page_number}",
+                "section_type": "PAGE",
+                "page": page_number,
+                "char_start": None,
+                "char_end": None,
+                "text": paragraph,
+                "span_type": "text",
+                "metadata": {"reader_span_id": f"{paper_id}-p{page_number:03d}-{paragraph_number:03d}", "pdf_reader": "pypdf"},
+            })
     if not spans:
         raise ValueError("PDF has no extractable text")
     bounded: list[dict[str, Any]] = []
@@ -59,6 +61,8 @@ def ingest_pdf(pdf_path: Path, paper: dict[str, Any]) -> dict[str, Any]:
         "policy_version": "full-source-v1",
         "paper": paper,
         "source_type": "pdf",
+        "source_path": str(pdf_path),
+        "source_metadata": {"pdf_reader": "pypdf"},
         "spans": bounded,
         "source_integrity": {
             "schema": "claims_source_payload_integrity_v1",
