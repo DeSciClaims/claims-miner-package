@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claims-sample-miner"
+version = "0.1.0"
+description = "Sample installable pipeline for the Claims weekly competition"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.10,<3", "pypdf>=5,<7"]
+
+[project.scripts]
+claims-sample-miner = "claims_sample_miner.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+claims_sample_miner = ["prompts/*.md"]

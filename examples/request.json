@@ -1,0 +1,6 @@
+{
+  "schema_version": "claims_competition_request_v1",
+  "paper": {"paper_id": "example-001", "title": "Example paper"},
+  "pdf_path": "paper.pdf",
+  "inference": {"model": "example/allowed-model", "stream": true, "max_output_tokens": 8192}
+}
