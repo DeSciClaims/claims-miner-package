@@ -30,6 +30,8 @@ The request is `claims_competition_request_v1`: `paper`, a read-only local
 `pdf_path`, and `inference` with a whitelisted `model`, `stream`, and
 `max_output_tokens`. Relative PDF paths resolve beside the request file.
 The runner captures stdout/stderr and independently validates the output.
+`examples/competition_manifest.json` shows the package entrypoint, declared
+team, model, source, and production-use licence for the signed upload API.
 
 ## Inference gateway exercise
 

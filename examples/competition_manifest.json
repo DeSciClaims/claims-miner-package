@@ -1,0 +1,10 @@
+{
+  "schema_version": "claims_competition_manifest_v1",
+  "package_format": "wheel",
+  "language": "python",
+  "team_id": "example-team",
+  "entrypoint": "claims_sample_miner.cli:main",
+  "source_included": true,
+  "license_production_use": true,
+  "models": ["example/allowed-model"]
+}
