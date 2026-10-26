@@ -44,3 +44,16 @@ usage and enforces the published budget.
 Run `PYTHONPATH=src python -m unittest discover -s tests` in an environment
 with the package dependencies. Tests use a generated real PDF and a mocked
 gateway; no model or storage credentials are required.
+
+For the full worker path, build the wheel, prepare an offline wheelhouse for
+the worker's Python version and platform, then run:
+
+```sh
+python tests/worker_harness_smoke.py \
+  --wheel dist/claims_sample_miner-0.1.0-py3-none-any.whl \
+  --wheelhouse /path/to/offline-wheelhouse
+```
+
+This installs the actual package in a fresh worker virtual environment and
+runs it on a generated PDF against a local streaming gateway. It does not
+require Bifrost credentials or a live model.
