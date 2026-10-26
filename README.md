@@ -31,7 +31,8 @@ The request is `claims_competition_request_v1`: `paper`, a read-only local
 `max_output_tokens`. Relative PDF paths resolve beside the request file.
 The runner captures stdout/stderr and independently validates the output.
 `examples/competition_manifest.json` shows the package entrypoint, declared
-team, model, source, and production-use licence for the signed upload API.
+team, model, source, production-use licence, and the exact wheel filename
+needed by pip for the signed upload API.
 
 ## Inference gateway exercise
 
@@ -54,6 +55,7 @@ python tests/worker_harness_smoke.py \
   --wheelhouse /path/to/offline-wheelhouse
 ```
 
-This installs the actual package in a fresh worker virtual environment and
-runs it on a generated PDF against a local streaming gateway. It does not
-require Bifrost credentials or a live model.
+This builds the actual one-paper input bundle, verifies its hashes in the guest
+harness, installs the package in a fresh worker virtual environment, and runs
+it on a generated PDF against a local streaming gateway. It does not require
+Bifrost credentials or a live model.

@@ -8,6 +8,7 @@ transitive dependencies for the worker Python version and platform.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import tempfile
@@ -20,7 +21,9 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO.parent / "Claims"))
 
-from competition.worker import run_one_paper
+from competition.worker_bundle import build_worker_bundle
+from competition.worker_contract import build_worker_contract
+from competition.worker_guest import run_bundle
 from test_package import valid_artifact, write_pdf
 
 
@@ -56,22 +59,40 @@ def main() -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             write_pdf(root / "paper.pdf")
-            (root / "request.json").write_text(json.dumps({
-                "schema_version": "claims_competition_request_v1",
+            manifest = json.loads((REPO / "examples/competition_manifest.json").read_text())
+            package = args.wheel.read_bytes()
+            pdf = (root / "paper.pdf").read_bytes()
+            job = {
+                "job_id": "a" * 64, "round_id": "pilot", "hotkey": "sample-miner",
+                "package_sha256": hashlib.sha256(package).hexdigest(),
+                "paper_id": "example-001", "lease_token": "local-smoke",
                 "paper": {"paper_id": "example-001", "title": "Example paper"},
-                "pdf_path": "paper.pdf",
-                "inference": {"model": "example/allowed-model", "stream": True},
-            }))
-            result = run_one_paper(
-                package_path=args.wheel, entrypoint="claims_sample_miner.cli:main",
-                request_path=root / "request.json", output_path=root / "output.json",
-                work_dir=root / "work", log_path=root / "worker.log",
+                "manifest": manifest,
+            }
+            contract = build_worker_contract(
+                job, allowed_models=("example/allowed-model",),
+                max_output_tokens=8192,
+            )
+            bundle = build_worker_bundle(
+                job={**job, "worker_contract": contract,
+                     "expected_pdf_sha256": hashlib.sha256(pdf).hexdigest()},
+                package=package, pdf=pdf,
+            )
+            input_dir = root / "input"
+            input_dir.mkdir()
+            for filename, content in bundle.items():
+                (input_dir / filename).write_bytes(content)
+            key_file = root / "paper-key"
+            key_file.write_text("paper-scoped-test-token")
+            result_dir = root / "result"
+            result = run_bundle(
+                input_dir=input_dir, result_dir=result_dir,
                 wheelhouse=args.wheelhouse,
                 inference_base_url=f"http://127.0.0.1:{server.server_port}/v1",
-                paper_key="paper-scoped-test-token",
+                paper_key_file=key_file,
             )
-            assert result.status == "completed", (result, (root / "worker.log").read_text())
-            output = json.loads((root / "output.json").read_text())
+            assert result["status"] == "completed", (result, (result_dir / "worker.log").read_text())
+            output = result["artifact"]
             assert output["logic"]["claims"][0]["statement"] == (
                 "The treatment group had a higher response rate than the control group."
             )
@@ -80,7 +101,7 @@ def main() -> None:
             assert Gateway.requests[0]["authorization"] == "Bearer paper-scoped-test-token"
             assert Gateway.requests[0]["body"]["stream"] is True
             assert Gateway.requests[0]["body"]["model"] == "example/allowed-model"
-            logs = (root / "worker.log").read_text()
+            logs = (result_dir / "worker.log").read_text()
             assert "[install] exit=0" in logs
             assert "[validate] agent_v1 output accepted" in logs
             assert "paper-scoped-test-token" not in logs
