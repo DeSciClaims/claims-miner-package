@@ -13,6 +13,7 @@ from pypdf import PdfReader, PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from claims_sample_miner.cli import ingest_pdf, run
+from claims_sample_miner.smoke_baseline import run as run_smoke_baseline
 
 PAPER_TEXT = "The treatment group had a higher response rate than the control group."
 
@@ -93,6 +94,23 @@ def fake_urlopen(request, timeout):
 
 
 class PackageTests(unittest.TestCase):
+    def test_testnet_smoke_baseline_emits_one_exact_pdf_claim_without_inference(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_pdf(root / "paper.pdf")
+            request = root / "request.json"
+            output = root / "output.json"
+            request.write_text(json.dumps({
+                "schema_version": "claims_competition_request_v1",
+                "paper": {"paper_id": "example-001", "title": "Example paper"},
+                "pdf_path": "paper.pdf",
+                "inference": {"model": "example/allowed-model"},
+            }))
+            run_smoke_baseline(request, output)
+            artifact = json.loads(output.read_text())
+            self.assertEqual(len(artifact["logic"]["claims"]), 1)
+            self.assertEqual(artifact["logic"]["claims"][0]["sources"][0]["quote"], PAPER_TEXT)
+
     def test_cli_extracts_pdf_through_openai_compatible_http_endpoint(self):
         observed = []
 

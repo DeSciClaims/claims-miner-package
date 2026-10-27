@@ -1,5 +1,11 @@
 # Claims sample miner package
 
+For testnet smoke rounds that need a deliberately small reference, use
+`claims_sample_miner.smoke_baseline:main`. It quotes one passage directly from
+the paper PDF without calling a model. This fixture is only for exercising
+selection and production handoff; the normal extraction entrypoint remains
+`claims_sample_miner.cli:main`.
+
 An installable extraction package for the weekly competition pilot. It reads a
 mounted PDF, extracts page and paragraph spans with the same IDs and 60,000
 character extraction budget as `Claims/miner/agent_v1`, asks the permitted
