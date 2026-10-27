@@ -8,6 +8,10 @@ references, and retries once with validation feedback. The schema, structural
 validator, and output prompt are copied from the canonical Claims miner; the
 model loop is a small OpenAI-compatible implementation for Bifrost.
 
+If both model responses fail structural or quote checks, the package keeps
+the extracted claims but rebuilds their evidence links from exact PDF spans.
+The validator still decides whether those claims are actually supported.
+
 This is a working baseline, not a claim of competitive extraction quality.
 Scanned PDFs without text need an OCR-capable reader in a later revision.
 
@@ -51,7 +55,7 @@ the worker's Python version and platform, then run:
 
 ```sh
 python tests/worker_harness_smoke.py \
-  --wheel dist/claims_sample_miner-0.1.0-py3-none-any.whl \
+  --wheel dist/claims_sample_miner-0.1.1-py3-none-any.whl \
   --wheelhouse /path/to/offline-wheelhouse
 ```
 

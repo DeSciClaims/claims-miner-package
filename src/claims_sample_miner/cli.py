@@ -15,7 +15,7 @@ from urllib.request import Request, urlopen
 
 from pypdf import PdfReader
 
-from .artifact_models import Artifact, Paper
+from .artifact_models import Artifact, Claim, EvidenceRecord, Paper, SourceRef
 from .artifact_validator import validate_agent_artifact
 
 REQUEST_SCHEMA = "claims_competition_request_v1"
@@ -133,6 +133,82 @@ def _grounding_issues(artifact: Artifact, spans: list[dict[str, Any]]) -> list[s
     return issues
 
 
+def _source_excerpt(text: str, statement: str) -> str:
+    """Choose an exact, short passage from an extracted span."""
+    terms = {word for word in re.findall(r"[a-z0-9]{4,}", statement.casefold())
+             if word not in {"that", "with", "from", "this", "were", "have"}}
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+|\n+", text)
+                 if part.strip()]
+    candidates = [part for part in sentences if 20 <= len(part) <= 500]
+    if not candidates:
+        candidates = [text[:300].strip()]
+    return max(candidates, key=lambda part: (
+        len(terms & set(re.findall(r"[a-z0-9]{4,}", part.casefold()))),
+        -len(part),
+    ))
+
+
+def _repair_with_exact_sources(
+    artifact: Artifact, paper: dict[str, Any], spans: list[dict[str, Any]],
+) -> Artifact:
+    """Keep extracted claims while replacing broken links with checked PDF quotes.
+
+    The scorer still decides whether a claim is actually supported. This only
+    guarantees that the quoted text exists in the submitted paper.
+    """
+    by_id = {span["span_id"]: span for span in spans}
+    if not by_id:
+        raise ValueError("PDF has no source spans for repair")
+    claims = artifact.logic.claims
+    if not claims:
+        excerpt = _source_excerpt(spans[0]["text"], paper["title"])
+        claims = [Claim(
+            claim_id="C01", statement=excerpt,
+            conditions="As reported in the cited paper",
+            status="supported",
+            falsification_criteria="A contradictory passage in the cited paper",
+        )]
+    repaired_evidence: list[EvidenceRecord] = []
+    for index, claim in enumerate(claims, start=1):
+        mentioned = [by_id[span_id] for source in claim.sources
+                     for span_id in source.span_ids if span_id in by_id]
+        candidates = mentioned or spans
+        best = max(candidates, key=lambda span: (
+            len(set(re.findall(r"[a-z0-9]{4,}", claim.statement.casefold()))
+                & set(re.findall(r"[a-z0-9]{4,}", span["text"].casefold()))),
+            -len(span["text"]),
+        ))
+        quote = _source_excerpt(best["text"], claim.statement)
+        if not quote or quote not in best["text"]:
+            raise ValueError("could not align claim to an exact PDF quote")
+        ref = SourceRef(
+            source_id=best["span_id"], source_type="span",
+            span_ids=[best["span_id"]], quote=quote, role="result",
+        )
+        claim.claim_id = f"C{index:02d}"
+        claim.sources = [ref]
+        claim.conditions = claim.conditions or "As reported in the cited paper"
+        claim.falsification_criteria = (claim.falsification_criteria
+                                       or "A contradictory result in the cited paper")
+        claim.proof = []
+        claim.dependencies = []
+        evidence_id = f"EV{index:02d}"
+        claim.evidence_ids = [evidence_id]
+        repaired_evidence.append(EvidenceRecord(
+            evidence_id=evidence_id, title=f"Source for claim {index}",
+            role="support", summary=quote, source_refs=[ref],
+            linked_claim_ids=[claim.claim_id],
+        ))
+    artifact.paper.paper_id = paper["paper_id"]
+    artifact.paper.title = paper["title"]
+    artifact.paper.claims_summary = [claim.statement for claim in claims]
+    artifact.logic.claims = claims
+    artifact.logic.experiments = []
+    artifact.evidence.records = repaired_evidence
+    artifact.metadata["repair_strategy"] = "exact_pdf_quote_alignment_v1"
+    return artifact
+
+
 def run(request_path: Path, output_path: Path) -> None:
     request = json.loads(request_path.read_text(encoding="utf-8"))
     if request.get("schema_version") != REQUEST_SCHEMA:
@@ -161,6 +237,7 @@ def run(request_path: Path, output_path: Path) -> None:
             "paper": paper, "source_payload": source, "agent_schema": Artifact.model_json_schema(),
         }, ensure_ascii=False)},
     ]
+    artifact: Artifact | None = None
     for attempt in range(2):
         result = completion(model=model, messages=messages, stream=stream, max_tokens=max_tokens)
         try:
@@ -173,25 +250,33 @@ def run(request_path: Path, output_path: Path) -> None:
                 raise ValueError("; ".join(issues))
         except (ValueError, TypeError, json.JSONDecodeError) as exc:
             if attempt:
-                raise ValueError(f"agent_v1 output invalid after repair: {exc}") from exc
+                if artifact is None:
+                    raise ValueError(f"agent_v1 output invalid after repair: {exc}") from exc
+                artifact = _repair_with_exact_sources(artifact, paper, source["spans"])
+                issues = [item["message"] for item in validate_agent_artifact(artifact)]
+                issues.extend(_grounding_issues(artifact, source["spans"]))
+                if issues:
+                    raise ValueError("; ".join(issues)) from exc
+                break
             messages.extend([
                 {"role": "assistant", "content": result},
                 {"role": "user", "content": "Repair the full JSON artifact. Validation errors: " + str(exc)},
             ])
             continue
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        artifact.paper.title = paper["title"]
-        artifact.metadata.update({
-            "pipeline_name": "claims_sample_miner",
-            "output_schema": "agent_v1",
-            "runtime": "bifrost-chat-completions",
-            "source_type": "pdf",
-            "source_integrity": source["source_integrity"],
-        })
-        output_path.write_text(artifact.model_dump_json(indent=2) + "\n", encoding="utf-8")
-        print(f"wrote {len(artifact.logic.claims)} claims for {paper['paper_id']}", file=sys.stderr)
-        return
-    raise AssertionError("unreachable")
+        break
+    if artifact is None:
+        raise ValueError("model produced no parseable artifact")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact.paper.title = paper["title"]
+    artifact.metadata.update({
+        "pipeline_name": "claims_sample_miner",
+        "output_schema": "agent_v1",
+        "runtime": "bifrost-chat-completions",
+        "source_type": "pdf",
+        "source_integrity": source["source_integrity"],
+    })
+    output_path.write_text(artifact.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    print(f"wrote {len(artifact.logic.claims)} claims for {paper['paper_id']}", file=sys.stderr)
 
 
 def main() -> None:

@@ -198,6 +198,30 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(model.call_count, 2)
             self.assertIn("Validation errors", model.call_args.kwargs["messages"][-1]["content"])
 
+    def test_exact_source_fallback_after_two_invalid_model_outputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_pdf(root / "paper.pdf")
+            (root / "request.json").write_text(json.dumps({
+                "schema_version": "claims_competition_request_v1",
+                "paper": {"paper_id": "example-001", "title": "Example paper"},
+                "pdf_path": "paper.pdf",
+                "inference": {"model": "allowed"},
+            }))
+            bad = valid_artifact()
+            bad["logic"]["claims"][0]["sources"][0]["quote"] = "Invented quote"
+            bad["logic"]["claims"][0]["proof"] = ["E99"]
+            bad["logic"]["claims"][0]["evidence_ids"] = ["EV99"]
+            with patch("claims_sample_miner.cli.completion", return_value=json.dumps(bad)) as model:
+                run(root / "request.json", root / "result.json")
+            self.assertEqual(model.call_count, 2)
+            artifact = json.loads((root / "result.json").read_text())
+            claim = artifact["logic"]["claims"][0]
+            self.assertEqual(claim["sources"][0]["quote"], PAPER_TEXT)
+            self.assertEqual(claim["proof"], [])
+            self.assertEqual(claim["evidence_ids"], ["EV01"])
+            self.assertEqual(artifact["metadata"]["repair_strategy"], "exact_pdf_quote_alignment_v1")
+
     def test_scanned_pdf_fails_without_model_call(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
