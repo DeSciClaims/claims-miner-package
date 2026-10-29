@@ -81,8 +81,11 @@ def completion(*, model: str, messages: list[dict[str, str]], stream: bool, max_
     """Call Bifrost's OpenAI-compatible worker endpoint with its scoped key."""
     base = os.environ["CLAIMS_INFERENCE_BASE_URL"].rstrip("/")
     token = os.environ["CLAIMS_INFERENCE_TOKEN"]
+    # The manifest uses OpenRouter catalog IDs; Bifrost needs the provider
+    # prefix on the wire while its virtual-key whitelist uses the catalog ID.
+    gateway_model = "openrouter/" + model.removeprefix("openrouter/")
     body = json.dumps({
-        "model": model, "messages": messages, "temperature": 0.2,
+        "model": gateway_model, "messages": messages, "temperature": 0.2,
         "max_tokens": max_tokens, "stream": stream,
     }).encode()
     request = Request(

@@ -88,7 +88,7 @@ def fake_urlopen(request, timeout):
     assert request.full_url == "http://gateway.internal:8080/v1/chat/completions"
     assert request.get_header("Authorization") == "Bearer paper-scoped-test-token"
     assert body["stream"] is True
-    assert body["model"] == "example/allowed-model"
+    assert body["model"] == "openrouter/example/allowed-model"
     assert timeout == 1800
     return FakeResponse()
 
@@ -164,7 +164,7 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(len(observed), 1)
             self.assertEqual(observed[0]["path"], "/v1/chat/completions")
             self.assertEqual(observed[0]["authorization"], "Bearer paper-scoped-test-token")
-            self.assertEqual(observed[0]["body"]["model"], "example/allowed-model")
+            self.assertEqual(observed[0]["body"]["model"], "openrouter/example/allowed-model")
         finally:
             server.shutdown()
             server.server_close()
