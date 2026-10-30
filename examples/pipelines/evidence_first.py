@@ -1,3 +1,6 @@
+from claims_sample_miner.grounding import grounded_passage
+
+
 def extract(source, ask):
     """Select verbatim result evidence before expressing the scientific findings."""
     evidence = ask(
@@ -7,8 +10,10 @@ def extract(source, ask):
     spans = {row["span_id"]: row for row in source["spans"]}
     checked = []
     for row in evidence:
-        if row["span_id"] not in spans or not row["quote"] or row["quote"] not in spans[row["span_id"]]["text"]:
-            raise ValueError("evidence selection returned an invented passage")
-        checked.append({"span_id": row["span_id"], "quote": row["quote"], "context": spans[row["span_id"]]["text"]})
+        passage = grounded_passage(source["spans"], row.get("span_id"), row.get("quote"))
+        if passage is not None:
+            checked.append({**passage, "context": spans[passage["span_id"]]["text"]})
+    if not checked:
+        raise ValueError("evidence selection returned no grounded passages")
     return ask("Express source-faithful findings from these verified passages. Return the claims schema.",
                {"paper": source["paper"], "evidence": checked})["claims"]

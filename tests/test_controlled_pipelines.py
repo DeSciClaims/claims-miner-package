@@ -25,6 +25,43 @@ def load(name, path):
 
 
 class ControlledPipelinesTests(unittest.TestCase):
+    def test_empty_grounded_output_gets_one_repair_and_never_fabricates_evidence(self):
+        for repair_succeeds in (True, False):
+            with self.subTest(repair_succeeds=repair_succeeds), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                request = root / "request.json"
+                request.write_text(json.dumps({
+                    "schema_version": "claims_competition_request_v1",
+                    "paper": {"paper_id": "example-001", "title": "Example"},
+                    "pdf_path": "paper.pdf",
+                    "inference": {"model": "allowed/model", "allowed_models": ["allowed/model"]},
+                }))
+                namespace = "controlled_repair"
+                package = types.ModuleType(namespace)
+                package.__path__ = []
+                sys.modules[namespace] = package
+                load(namespace + ".strategy", ROOT / "examples/pipelines/full_document.py")
+                runner = load(namespace + ".runner", ROOT / "examples/pipelines/runner.py")
+                source = {"spans": [{"span_id": "real", "text": PAPER_TEXT}], "source_integrity": {}}
+                bad = {"statement": "Result", "span_id": "real", "quote": "fabricated quotation"}
+                good = {"statement": PAPER_TEXT, "span_id": "real", "quote": PAPER_TEXT}
+                replies = [json.dumps({"claims": [bad]}),
+                           json.dumps({"claims": [good if repair_succeeds else bad]})]
+                output = root / "output.json"
+                with patch.object(runner, "ingest_pdf", return_value=source), \
+                     patch.object(runner, "completion", side_effect=replies) as completion, \
+                     patch.object(sys, "argv", ["pipeline", "--request", str(request), "--output", str(output)]):
+                    if repair_succeeds:
+                        runner.main()
+                        artifact = Artifact.model_validate_json(output.read_text())
+                        self.assertEqual(artifact.logic.claims[0].sources[0].quote, PAPER_TEXT)
+                        self.assertEqual(artifact.metadata["model_calls"], 2)
+                    else:
+                        with self.assertRaisesRegex(ValueError, "no grounded findings"):
+                            runner.main()
+                        self.assertFalse(output.exists())
+                    self.assertEqual(completion.call_count, 2)
+
     def test_all_strategies_write_grounded_artifacts_and_use_the_expected_calls(self):
         for strategy, expected_calls in zip(NAMES, (1, 1, 2, 2, 1), strict=True):
             with self.subTest(strategy=strategy), tempfile.TemporaryDirectory() as directory:
@@ -48,7 +85,10 @@ class ControlledPipelinesTests(unittest.TestCase):
                 def completion(**kwargs):
                     if 'Return {"passages":' in kwargs["messages"][0]["content"]:
                         return json.dumps({"passages": [{"span_id": claim["span_id"], "quote": PAPER_TEXT}]})
-                    return json.dumps({"claims": [claim]})
+                    return json.dumps({"claims": [claim, {
+                        "statement": "Invented result", "span_id": claim["span_id"],
+                        "quote": "This evidence does not exist in the source.",
+                    }, None]})
 
                 output = root / "output.json"
                 with patch.object(runner, "completion", side_effect=completion), patch.object(sys, "argv", ["pipeline", "--request", str(request), "--output", str(output)]):
@@ -56,6 +96,7 @@ class ControlledPipelinesTests(unittest.TestCase):
                 artifact = Artifact.model_validate_json(output.read_text())
                 self.assertEqual(validate_agent_artifact(artifact), [])
                 self.assertEqual(artifact.metadata["model_calls"], expected_calls)
+                self.assertEqual(artifact.metadata["discarded_ungrounded_claims"], 2)
                 self.assertEqual(artifact.logic.claims[0].sources[0].quote, PAPER_TEXT)
 
     def test_evidence_first_rejects_fabricated_passages_before_the_second_call(self):
@@ -66,6 +107,6 @@ class ControlledPipelinesTests(unittest.TestCase):
             calls.append(args)
             return {"passages": [{"span_id": "real", "quote": "invented"}]}
 
-        with self.assertRaisesRegex(ValueError, "invented passage"):
+        with self.assertRaisesRegex(ValueError, "no grounded passages"):
             module.extract({"spans": [{"span_id": "real", "text": PAPER_TEXT}]}, ask)
         self.assertEqual(len(calls), 1)
