@@ -41,4 +41,6 @@ Set the request's model to one permitted by that gateway. The PDF path in the re
 
 Update [`examples/competition_manifest.json`](./examples/competition_manifest.json) with your team ID, entrypoint, allowed model IDs, licence declaration, and the exact wheel filename from `dist/`. Upload the package through the Claims hotkey-signed upload service, then finalize it so its bytes and SHA-256 are sealed. Publish the matching on-chain package commitment and manifest ID before the round deadline. The [submission guide](https://github.com/DeSciClaims/Claims/blob/main/docs/submission.md) defines the commitment format.
 
+Declare the same `team_id` for pipelines controlled by the same operator or team. This is a declaration, not proof that entries are independent. The backend determines effective teams using declared affiliations, shared coldkeys, resolved funding lineage and reviewed code links. Different team IDs do not override detected links; advancement and reward limits apply to the resolved teams.
+
 The worker installs packages from an offline wheelhouse. Include or declare dependencies compatible with that environment; package installation and execution logs are available to the submitting hotkey after evaluation.
