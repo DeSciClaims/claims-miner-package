@@ -151,7 +151,12 @@ activemq-data/
 
 # Environments
 .env
+.env.*
 .envrc
+.ssh/
+*.pem
+*.key
+known_hosts
 .venv
 env/
 venv/

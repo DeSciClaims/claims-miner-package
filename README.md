@@ -1,71 +1,44 @@
 # Claims sample miner package
 
-For testnet smoke rounds that need a deliberately small reference, use
-`claims_sample_miner.smoke_baseline:main`. It quotes one passage directly from
-the paper PDF without calling a model. This fixture is only for exercising
-selection and production handoff; the normal extraction entrypoint remains
-`claims_sample_miner.cli:main`.
+This repository is a complete Python extraction package for the [Claims weekly competition](https://github.com/DeSciClaims/Claims). It reads a supplied PDF, extracts stable source spans, calls a permitted model through the Claims inference gateway, and writes a source-grounded `agent_v1` artifact. It validates the artifact and retries once with validation feedback.
 
-An installable extraction package for the weekly competition pilot. It reads a
-mounted PDF, extracts page and paragraph spans with the same IDs and 60,000
-character extraction budget as `Claims/miner/agent_v1`, asks the permitted
-model for a source-grounded ARA artifact, validates the `agent_v1` shape and
-references, and retries once with validation feedback. The schema, structural
-validator, and output prompt are copied from the canonical Claims miner; the
-model loop is a small OpenAI-compatible implementation for Bifrost.
+Use it as a working starting point for your own pipeline. Its [manifest](./examples/competition_manifest.json), [request](./examples/request.json), and [package entrypoint](./src/claims_sample_miner/cli.py) show the competition contract.
 
-If both model responses fail structural or quote checks, the package keeps
-the extracted claims but rebuilds their evidence links from exact PDF spans.
-The validator still decides whether those claims are actually supported.
+## Package contract
 
-This is a working baseline, not a claim of competitive extraction quality.
-Scanned PDFs without text need an OCR-capable reader in a later revision.
+Build a wheel containing source and declare a `module:function` entrypoint in the manifest. For this package the entrypoint is `claims_sample_miner.cli:main`. The worker invokes it with:
 
-## Build and run
+```text
+--request /path/to/request.json --output /path/to/output.json
+```
 
-Build and install only inside a disposable test environment:
+The request has schema `claims_competition_request_v1`. It contains paper metadata, a read-only local `pdf_path`, and inference settings: the default model, allowed models, streaming preference, and maximum output tokens. The entrypoint must write one JSON `agent_v1` artifact for that paper. It may make multiple allowed inference calls within the round's per-paper budget.
+
+The worker sets `CLAIMS_INFERENCE_BASE_URL` to the gateway's OpenAI-compatible `/v1` endpoint and `CLAIMS_INFERENCE_TOKEN` to a short-lived, paper-scoped virtual key. Your code can read this key to call `/chat/completions`; it never receives the upstream OpenRouter key or gateway administration credential. Do not write the scoped key into your output or logs.
+
+## Build and verify
 
 ```sh
 uv build --wheel --out-dir dist
-uv venv /tmp/claims-sample-miner-venv
-uv pip install --python /tmp/claims-sample-miner-venv/bin/python dist/*.whl
-CLAIMS_INFERENCE_BASE_URL=http://gateway.internal:8080/v1 \
-CLAIMS_INFERENCE_TOKEN=<paper-scoped-key> \
-/tmp/claims-sample-miner-venv/bin/claims-sample-miner \
-  --request examples/request.json \
-  --output /tmp/claims-sample-agent-output.json
+python3 -m venv .venv
+.venv/bin/python -m pip install -e .
+.venv/bin/python -m unittest discover -s tests
 ```
 
-The request is `claims_competition_request_v1`: `paper`, a read-only local
-`pdf_path`, and `inference` with a whitelisted `model`, `stream`, and
-`max_output_tokens`. Relative PDF paths resolve beside the request file.
-The runner captures stdout/stderr and independently validates the output.
-`examples/competition_manifest.json` shows the package entrypoint, declared
-team, model, source, production-use licence, and the exact wheel filename
-needed by pip for the signed upload API.
+The tests use a generated PDF and a local gateway fixture. They require no provider credentials. This package reads selectable PDF text; add OCR if your pipeline must handle image-only papers.
 
-## Inference gateway exercise
-
-The worker provides `CLAIMS_INFERENCE_BASE_URL` (ending in `/v1`) and a
-paper-scoped `CLAIMS_INFERENCE_TOKEN`. Miner code can read this token; it
-never receives the OpenRouter key or Bifrost's administrative key. Bifrost
-must run outside the miner execution boundary. The controller accounts for
-usage and enforces the published budget.
-
-Run `PYTHONPATH=src python -m unittest discover -s tests` in an environment
-with the package dependencies. Tests use a generated real PDF and a mocked
-gateway; no model or storage credentials are required.
-
-For the full worker path, build the wheel, prepare an offline wheelhouse for
-the worker's Python version and platform, then run:
+For a local extraction run, use your own OpenAI-compatible gateway and set the two inference environment variables before invoking the installed entrypoint:
 
 ```sh
-python tests/worker_harness_smoke.py \
-  --wheel dist/claims_sample_miner-0.1.1-py3-none-any.whl \
-  --wheelhouse /path/to/offline-wheelhouse
+CLAIMS_INFERENCE_BASE_URL=https://your-gateway.example/v1 \
+CLAIMS_INFERENCE_TOKEN=your-local-key \
+claims-sample-miner --request examples/request.json --output /tmp/claims-output.json
 ```
 
-This builds the actual one-paper input bundle, verifies its hashes in the guest
-harness, installs the package in a fresh worker virtual environment, and runs
-it on a generated PDF against a local streaming gateway. It does not require
-Bifrost credentials or a live model.
+Set the request's model to one permitted by that gateway. The PDF path in the request resolves relative to the request file. For competition jobs, the worker supplies the request, PDF, gateway URL, and scoped key automatically.
+
+## Submit
+
+Update [`examples/competition_manifest.json`](./examples/competition_manifest.json) with your team ID, entrypoint, allowed model IDs, licence declaration, and the exact wheel filename from `dist/`. Upload the package through the Claims hotkey-signed upload service, then finalize it so its bytes and SHA-256 are sealed. Publish the matching on-chain package commitment and manifest ID before the round deadline. The [submission guide](https://github.com/DeSciClaims/Claims/blob/main/docs/submission.md) defines the commitment format.
+
+The worker installs packages from an offline wheelhouse. Include or declare dependencies compatible with that environment; package installation and execution logs are available to the submitting hotkey after evaluation.
