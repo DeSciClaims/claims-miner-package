@@ -1,0 +1,32 @@
+# Controlled competition pipelines
+
+These five pipelines exercise the competition using operator-controlled
+accounts. They share the public sample's PDF ingestion and artifact schema,
+with different extraction algorithms:
+
+| Pipeline | Method |
+| --- | --- |
+| `full_document` | One complete-document extraction call |
+| `section_map` | Independent extraction from document portions, followed by exact deduplication |
+| `evidence_first` | Select and verify quotations, then express findings |
+| `verify_findings` | Draft findings, then audit them against the full source |
+| `results_focus` | Retrieve result-bearing spans before extraction |
+
+All calls use the worker's scoped gateway key. Quotes must occur in their
+declared source spans; malformed or unsupported outputs fail validation.
+No evaluation paper IDs, expected answers or private provider keys are bundled.
+
+Build using a private participant manifest with five entries containing
+`wallet`, `coldkey`, `hotkey` and `team_id`:
+
+```sh
+python scripts/build_testnet_pipelines.py \
+  --participants /private/path/participants.json \
+  --output /private/path/packages
+```
+
+The build creates one wheel and competition manifest per account, plus
+`packages.json` with hashes. Each wheel contains only its selected strategy.
+Shared public source can be supplied to the normal duplicate candidate scanner;
+duplicate checks and manual linkage review remain enabled. These accounts test
+the workflow and do not demonstrate five independent operators.
